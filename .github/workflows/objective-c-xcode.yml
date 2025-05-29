@@ -1,30 +1,71 @@
-name: Xcode - Build and Analyze
+name: NyxianProject Build
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ main, master ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ main, master ]
 
 jobs:
   build:
-    name: Build and analyse default scheme using xcodebuild command
     runs-on: macos-latest
-
+    
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Set Default Scheme
-        run: |
-          scheme_list=$(xcodebuild -list -json | tr -d "\n")
-          default=$(echo $scheme_list | ruby -e "require 'json'; puts JSON.parse(STDIN.gets)['project']['targets'][0]")
-          echo $default | cat >default
-          echo Using default scheme: $default
-      - name: Build
-        env:
-          scheme: ${{ 'default' }}
-        run: |
-          if [ $scheme = default ]; then scheme=$(cat default); fi
-          if [ "`ls -A | grep -i \\.xcworkspace\$`" ]; then filetype_parameter="workspace" && file_to_build="`ls -A | grep -i \\.xcworkspace\$`"; else filetype_parameter="project" && file_to_build="`ls -A | grep -i \\.xcodeproj\$`"; fi
-          file_to_build=`echo $file_to_build | awk '{$1=$1;print}'`
-          xcodebuild clean build analyze -scheme "$scheme" -"$filetype_parameter" "$file_to_build" | xcpretty && exit ${PIPESTATUS[0]}
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    
+    - name: Setup Xcode
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: latest-stable
+    
+    - name: Install Build Tools
+      run: |
+        # 安装可能需要的构建工具
+        brew install cmake
+        brew install ninja
+    
+    - name: Cache Build Artifacts
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/Library/Caches/com.apple.dt.Xcode
+          ~/Library/Developer/Xcode/DerivedData
+        key: ${{ runner.os }}-xcode-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-xcode-
+    
+    - name: Build Project
+      run: |
+        # 检查项目结构并构建
+        echo "项目文件结构："
+        find . -name "*.xcodeproj" -o -name "*.xcworkspace" -o -name "Makefile" -o -name "*.sh"
+        
+        # 尝试不同的构建方法
+        if [ -f "build.sh" ]; then
+          chmod +x build.sh
+          ./build.sh
+        elif [ -f "Makefile" ]; then
+          make
+        else
+          # 使用 xcodebuild
+          PROJECT_FILE=$(find . -name "*.xcodeproj" | head -1)
+          WORKSPACE_FILE=$(find . -name "*.xcworkspace" | head -1)
+          
+          if [ ! -z "$WORKSPACE_FILE" ]; then
+            xcodebuild -workspace "$WORKSPACE_FILE" -scheme "NyxianProject" -configuration Release -destination 'platform=iOS Simulator,name=iPhone 14' build
+          elif [ ! -z "$PROJECT_FILE" ]; then
+            xcodebuild -project "$PROJECT_FILE" -scheme "NyxianProject" -configuration Release -destination 'platform=iOS Simulator,name=iPhone 14' build
+          fi
+        fi
+    
+    - name: Upload Build Artifacts
+      uses: actions/upload-artifact@v3
+      if: success()
+      with:
+        name: build-artifacts
+        path: |
+          build/
+          DerivedData/
